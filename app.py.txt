@@ -1,0 +1,99 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import os
+from datetime import datetime
+
+# --- CONFIGURATION ---
+st.set_page_config(page_title="TIA Quality Control", page_icon="🛡️", layout="wide")
+EXCEL_FILE = "suivi_qualite.xlsx"
+
+# --- LOGIQUE DE DONNÉES ---
+def charger_donnees():
+    if os.path.exists(EXCEL_FILE):
+        try:
+            df = pd.read_excel(EXCEL_FILE)
+            # Vérification de sécurité pour les nouvelles colonnes
+            for col in ["Passage", "Part Number"]:
+                if col not in df.columns:
+                    df[col] = "N/A"
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df
+        except:
+            return creer_df_vide()
+    else:
+        return creer_df_vide()
+
+def creer_df_vide():
+    return pd.DataFrame(columns=[
+        "Date", "Main Company", "Site", "Supplier", 
+        "Job", "Passage", "Part Number", "Failures", "Quantity"
+    ])
+
+def sauvegarder_donnees(new_df):
+    if os.path.exists(EXCEL_FILE):
+        df_existing = pd.read_excel(EXCEL_FILE)
+        df_final = pd.concat([df_existing, new_df], ignore_index=True)
+    else:
+        df_final = new_df
+    df_final.to_excel(EXCEL_FILE, index=False)
+
+# Chargement
+df_global = charger_donnees()
+
+# --- INTERFACE ---
+st.title("🛡️ TIA - Système de Suivi Qualité")
+
+with st.expander("➕ Enregistrer une nouvelle défaillance (Failure)", expanded=True):
+    with st.form("form_saisie", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            site = st.selectbox("Site (Factory)", ["Site A", "Site B", "Site C"])
+            supplier = st.selectbox("Fournisseur", ["MERU", "ABC Parts", "SteelCo"])
+            job = st.text_input("Numéro de Job")
+            passage = st.selectbox("Numéro de Passage", ["Passage 1", "Passage 2", "Passage 3", "Retouche"])
+        with c2:
+            part_number = st.text_input("Part Number (N° de Pièce)")
+            failures = st.multiselect("Types de Failure", ["Wrong Colour", "Wrong Size", "Damage", "Missing Part"])
+            qty = st.number_input("Quantité (1-50)", 1, 50, 1)
+            date_s = st.date_input("Date du constat", datetime.now())
+        
+        if st.form_submit_button("Valider"):
+            if job and part_number:
+                new_row = pd.DataFrame({
+                    "Date": [pd.to_datetime(date_s)], "Main Company": ["TIA"],
+                    "Site": [site], "Supplier": [supplier], "Job": [job],
+                    "Passage": [passage], "Part Number": [part_number],
+                    "Failures": [", ".join(failures)], "Quantity": [qty]
+                })
+                sauvegarder_donnees(new_row)
+                st.success("Enregistré !")
+                st.rerun()
+            else:
+                st.error("Job et Part Number obligatoires.")
+
+# --- STATISTIQUES ---
+if not df_global.empty:
+    st.divider()
+    st.header("📊 Tableau de Bord & Statistiques")
+    
+    # Filtre Sidebar corrigé
+    st.sidebar.header("🔍 Filtres")
+    unique_passages = df_global['Passage'].unique().tolist()
+    selected_pass = st.sidebar.multiselect("Filtrer par Passage", unique_passages, default=unique_passages)
+    
+    df_filt = df_global[df_global['Passage'].isin(selected_pass)]
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Total Rejets", f"{df_filt['Quantity'].sum()} pcs")
+    k2.metric("Part Numbers suivis", df_filt['Part Number'].nunique())
+    k3.metric("Taux de Retouches", f"{len(df_filt[df_filt['Passage'] == 'Retouche'])} dossiers")
+
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.plotly_chart(px.bar(df_filt, x="Supplier", y="Quantity", color="Passage", title="Volume par Fournisseur"), use_container_width=True)
+    with c_right:
+        st.plotly_chart(px.pie(df_filt, values="Quantity", names="Failures", title="Types de Défauts"), use_container_width=True)
+
+    st.subheader("📋 Historique complet")
+    st.dataframe(df_filt, use_container_width=True)
