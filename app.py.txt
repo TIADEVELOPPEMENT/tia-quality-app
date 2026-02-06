@@ -1,0 +1,93 @@
+import streamlit as st
+import pandas as pd
+import os
+import plotly.express as px
+from datetime import datetime
+
+st.set_page_config(page_title="TIA Quality Control v3", layout="wide")
+
+EXCEL_FILE = "suivi_qualite.xlsx"
+
+# Initialisation du fichier si inexistant
+if not os.path.exists(EXCEL_FILE):
+    df_init = pd.DataFrame(columns=["Date", "Main Company", "Site", "Supplier", "Job", "Failures", "Quantity"])
+    df_init.to_excel(EXCEL_FILE, index=False)
+
+st.title("🛡️ TIA - Dashboard Qualité Avancé")
+
+# --- BARRE LATÉRALE : FILTRES ---
+st.sidebar.header("🔍 Filtres d'Analyse")
+
+if os.path.exists(EXCEL_FILE):
+    df_load = pd.read_excel(EXCEL_FILE)
+    df_load['Date'] = pd.to_datetime(df_load['Date'])
+    
+    # Sélecteur de plage de dates
+    min_date = df_load['Date'].min().date() if not df_load.empty else datetime.now().date()
+    max_date = df_load['Date'].max().date() if not df_load.empty else datetime.now().date()
+    
+    date_range = st.sidebar.date_input("Sélectionner une période", [min_date, max_date])
+
+# --- FORMULAIRE (Expander) ---
+with st.expander("➕ Enregistrer une nouvelle Failure", expanded=False):
+    # (Le code du formulaire reste identique à la version précédente...)
+    col1, col2 = st.columns(2)
+    with col1:
+        site = st.selectbox("Site (Factory)", ["Usine Lyon", "Usine Madrid", "Usine Tanger"])
+        supplier = st.selectbox("Fournisseur", ["MERU", "ABC Parts", "SteelCo", "Iberia Components"])
+        job = st.text_input("Numéro de Job")
+    with col2:
+        failures = st.multiselect("Types de Failure", ["Wrong Colour", "Wrong Size", "Surface Scratch"])
+        qty = st.number_input("Nombre de pièces", 1, 50)
+        date_saisie = st.date_input("Date du constat", datetime.now())
+
+    if st.button("Enregistrer l'incident"):
+        new_entry = pd.DataFrame({
+            "Date": [pd.to_datetime(date_saisie)],
+            "Main Company": ["TIA"],
+            "Site": [site],
+            "Supplier": [supplier],
+            "Job": [job],
+            "Failures": [", ".join(failures)],
+            "Quantity": [qty]
+        })
+        df_existing = pd.read_excel(EXCEL_FILE)
+        pd.concat([df_existing, new_entry]).to_excel(EXCEL_FILE, index=False)
+        st.success("Données enregistrées !")
+        st.rerun()
+
+# --- LOGIQUE DE FILTRAGE ET GRAPHIQUES ---
+if not df_load.empty:
+    # Filtrage par date
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        mask = (df_load['Date'].dt.date >= start_date) & (df_load['Date'].dt.date <= end_date)
+        df_filtered = df_load.loc[mask]
+    else:
+        df_filtered = df_load
+
+    # KPI Cards (Indicateurs clés)
+    total_rejets = df_filtered['Quantity'].sum()
+    total_jobs = df_filtered['Job'].nunique()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Pièces Rejetées", f"{total_rejets} pcs")
+    c2.metric("Jobs Impactés", total_jobs)
+    c3.metric("Moyenne Rejets / Job", round(total_rejets/total_jobs, 1) if total_jobs > 0 else 0)
+
+    # Graphique temporel
+    st.subheader("📈 Évolution des défauts dans le temps")
+    fig_line = px.line(df_filtered.groupby('Date')['Quantity'].sum().reset_index(), 
+                       x='Date', y='Quantity', title="Quantité de rejets par jour")
+    st.plotly_chart(fig_line, use_container_width=True)
+
+    col_left, col_right = st.columns(2)
+    with col_left:
+        fig_bar = px.bar(df_filtered, x="Supplier", y="Quantity", color="Failures", title="Détail par Fournisseur")
+        st.plotly_chart(fig_bar)
+    with col_right:
+        st.subheader("Dernières saisies")
+        st.table(df_filtered.tail(5)[['Date', 'Supplier', 'Quantity']])
+
+else:
+    st.warning("La base de données est vide. Veuillez effectuer une saisie.")
