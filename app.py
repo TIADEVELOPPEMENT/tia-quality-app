@@ -6,107 +6,124 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="TIA Quality Control", page_icon="🛡️", layout="wide")
-EXCEL_FILE = "suivi_qualite.xlsx"
+EXCEL_FILE = "quality_tracking.xlsx"
 
-# --- STRUCTURE DES DONNÉES (Dictionnaire de dépendances) ---
-# Vous pouvez modifier ces listes avec vos vrais noms de fournisseurs
+# --- DATA STRUCTURE (Dependency Dictionary) ---
 SITES_DATA = {
-    "Site Lyon": ["MERU", "ABC Parts", "SteelCo"],
-    "Site Madrid": ["Iberia Components", "MERU", "Madrid Logistics"],
-    "Site Tanger": ["Atlas Tech", "North Supply", "Maghreb Parts", "Tanger Fab"]
+    "Lyon Plant": ["MERU", "ABC Parts", "SteelCo"],
+    "Madrid Plant": ["Iberia Components", "MERU", "Madrid Logistics"],
+    "Tangier Plant": ["Atlas Tech", "North Supply", "Maghreb Parts", "Tangier Fab"]
 }
 
-# --- LOGIQUE DE DONNÉES ---
-def charger_donnees():
+# --- DATA LOGIC ---
+@st.cache_data(ttl=60)
+def load_data():
     if os.path.exists(EXCEL_FILE):
         try:
             df = pd.read_excel(EXCEL_FILE)
-            for col in ["Passage", "Part Number"]:
-                if col not in df.columns:
-                    df[col] = "N/A"
             df['Date'] = pd.to_datetime(df['Date'])
             return df
-        except:
-            return creer_df_vide()
-    return creer_df_vide()
+        except Exception:
+            return create_empty_df()
+    return create_empty_df()
 
-def creer_df_vide():
+def create_empty_df():
     return pd.DataFrame(columns=[
         "Date", "Main Company", "Site", "Supplier", 
-        "Job", "Passage", "Part Number", "Failures", "Quantity"
+        "Job Number", "Passage", "Part Number", "Failure Type", "Quantity"
     ])
 
-def sauvegarder_donnees(new_df):
-    if os.path.exists(EXCEL_FILE):
-        df_existing = pd.read_excel(EXCEL_FILE)
-        df_final = pd.concat([df_existing, new_df], ignore_index=True)
-    else:
-        df_final = new_df
+def save_data(new_row_df):
+    df_existing = load_data()
+    df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
     df_final.to_excel(EXCEL_FILE, index=False)
-
-df_global = charger_donnees()
+    st.cache_data.clear()
 
 # --- INTERFACE ---
-st.title("🛡️ TIA - Système de Suivi Qualité")
+st.title("🛡️ TIA - Quality Tracking System")
 
-with st.expander("➕ Enregistrer une nouvelle défaillance (Failure)", expanded=True):
-    # Utilisation d'un formulaire pour la validation finale
-    with st.form("form_saisie", clear_on_submit=True):
+with st.expander("➕ Register a New Failure", expanded=True):
+    # Dynamic selection outside the form for instant reactivity
+    col1, col2 = st.columns(2)
+    with col1:
+        site = st.selectbox("Select Site (Factory)", list(SITES_DATA.keys()))
+    with col2:
+        supplier = st.selectbox("Select Supplier", SITES_DATA[site])
+
+    with st.form("entry_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        
         with c1:
-            # 1. Sélection du Site
-            site_list = list(SITES_DATA.keys())
-            site = st.selectbox("Sélectionner le Site (Factory)", site_list)
-            
-            # 2. Sélection du Fournisseur (DÉPENDANT DU SITE CHOISI)
-            # Cette liste se met à jour automatiquement selon le choix au-dessus
-            supplier_list = SITES_DATA[site]
-            supplier = st.selectbox("Sélectionner le Fournisseur", supplier_list)
-            
-            job = st.text_input("Numéro de Job")
-            passage = st.selectbox("Numéro de Passage", ["Passage 1", "Passage 2", "Passage 3", "Retouche"])
+            job = st.text_input("Job Number")
+            passage = st.selectbox("Passage Number", ["Passage 1", "Passage 2", "Passage 3", "Rework"])
+            date_s = st.date_input("Detection Date", datetime.now())
             
         with c2:
-            part_number = st.text_input("Part Number (N° de Pièce)")
-            failures = st.multiselect("Types de Failure", ["Wrong Colour", "Wrong Size", "Damage", "Missing Part"])
-            qty = st.number_input("Quantité (1-50)", 1, 50, 1)
-            date_s = st.date_input("Date du constat", datetime.now())
+            part_number = st.text_input("Part Number")
+            failures = st.multiselect("Failure Types", ["Wrong Colour", "Wrong Size", "Damage", "Missing Part", "Surface Defect"])
+            qty = st.number_input("Quantity", 1, 500, 1)
         
-        if st.form_submit_button("Valider l'enregistrement"):
-            if job and part_number:
+        submit = st.form_submit_button("Confirm Registration")
+        
+        if submit:
+            if job and part_number and failures:
                 new_row = pd.DataFrame({
-                    "Date": [pd.to_datetime(date_s)], "Main Company": ["TIA"],
-                    "Site": [site], "Supplier": [supplier], "Job": [job],
-                    "Passage": [passage], "Part Number": [part_number],
-                    "Failures": [", ".join(failures)], "Quantity": [qty]
+                    "Date": [pd.to_datetime(date_s)], 
+                    "Main Company": ["TIA"],
+                    "Site": [site], 
+                    "Supplier": [supplier], 
+                    "Job Number": [job],
+                    "Passage": [passage], 
+                    "Part Number": [part_number],
+                    "Failure Type": [", ".join(failures)], 
+                    "Quantity": [qty]
                 })
-                sauvegarder_donnees(new_row)
-                st.success(f"Enregistré pour {supplier} sur le {site} !")
+                save_data(new_row)
+                st.success(f"Success! Entry recorded for {supplier} ({site}).")
                 st.rerun()
             else:
-                st.error("⚠️ Champs obligatoires : Job et Part Number.")
+                st.error("⚠️ Mandatory fields: Job Number, Part Number, and Failure Type.")
 
-# --- STATISTIQUES ---
+# --- STATISTICS ---
+df_global = load_data()
+
 if not df_global.empty:
     st.divider()
-    st.header("📊 Tableau de Bord & Statistiques")
+    st.header("📊 Dashboard & Analytics")
     
-    st.sidebar.header("🔍 Filtres")
+    # Sidebar Filters
+    st.sidebar.header("🔍 Filters")
     unique_sites = df_global['Site'].unique().tolist()
-    selected_site_filter = st.sidebar.multiselect("Filtrer par Site", unique_sites, default=unique_sites)
+    selected_sites = st.sidebar.multiselect("Filter by Site", unique_sites, default=unique_sites)
     
-    df_filt = df_global[df_global['Site'].isin(selected_site_filter)]
+    df_filt = df_global[df_global['Site'].isin(selected_sites)]
 
+    # Key Performance Indicators (KPIs)
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total Rejets", f"{df_filt['Quantity'].sum()} pcs")
-    k2.metric("Part Numbers Impactés", df_filt['Part Number'].nunique())
-    k3.metric("Sites Actifs", df_filt['Site'].nunique())
+    total_qty = df_filt['Quantity'].sum()
+    unique_parts = df_filt['Part Number'].nunique()
+    
+    k1.metric("Total Rejections", f"{total_qty} units")
+    k2.metric("Impacted Part Numbers", unique_parts)
+    k3.metric("Active Sites", df_filt['Site'].nunique())
 
-    c_left, c_right = st.columns(2)
-    with c_left:
-        st.plotly_chart(px.bar(df_filt, x="Supplier", y="Quantity", color="Site", title="Volume par Fournisseur"), use_container_width=True)
-    with c_right:
-        st.plotly_chart(px.pie(df_filt, values="Quantity", names="Failures", title="Répartition des Défauts"), use_container_width=True)
+    # Visuals
+    chart_left, chart_right = st.columns(2)
+    with chart_left:
+        fig_bar = px.bar(df_filt, x="Supplier", y="Quantity", color="Site", 
+                         title="Rejection Volume by Supplier",
+                         labels={"Quantity": "Qty Rejected"})
+        st.plotly_chart(fig_bar, use_container_width=True)
+        
+    with chart_right:
+        # Explode failures for accurate pie chart representation
+        df_pie = df_filt.assign(Failure=df_filt['Failure Type'].str.split(', ')).explode('Failure')
+        fig_pie = px.pie(df_pie, values="Quantity", names="Failure", 
+                         title="Distribution of Failure Types",
+                         hole=0.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
 
+    # Data Table
+    st.subheader("📋 Recent Entries")
     st.dataframe(df_filt.sort_values(by="Date", ascending=False), use_container_width=True)
+else:
+    st.info("💡 No data recorded yet. Use the form above to start tracking quality issues.")
